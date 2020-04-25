@@ -27,7 +27,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-int gpioTest();
+void gpioTest();
+void checkBufferSize();
 
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
@@ -154,7 +155,7 @@ static void transfer(int fd, uint8_t const *tx, uint8_t const *rx, size_t len)
 	if (output_file) {
 		out_fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 		if (out_fd < 0)
-			pabort("could not open output file");
+			pabort("could not open output file, check 'sudo raspi-config' and ensure SPI is enabled");
 
 		ret = write(out_fd, rx, len);
 		if (ret != len)
@@ -173,23 +174,7 @@ static void print_usage(const char *prog)
 {
 	printf("Usage: %s [-DsbdlHOLC3]\n", prog);
 	puts("  -D --device   device to use (default /dev/spidev0.0)\n"
-	     "  -s --speed    max speed (Hz)\n"
-	     "  -d --delay    delay (usec)\n"
-	     "  -b --bpw      bits per word\n"
-	     "  -i --input    input data from a file (e.g. \"test.bin\")\n"
-	     "  -o --output   output data to a file (e.g. \"results.bin\")\n"
-	     "  -l --loop     loopback\n"
-	     "  -H --cpha     clock phase\n"
-	     "  -O --cpol     clock polarity\n"
-	     "  -L --lsb      least significant bit first\n"
-	     "  -C --cs-high  chip select active high\n"
-	     "  -3 --3wire    SI/SO signals shared\n"
-	     "  -v --verbose  Verbose (show tx buffer)\n"
-	     "  -p            Send data (e.g. \"1234\\xde\\xad\")\n"
-	     "  -N --no-cs    no chip select\n"
-	     "  -R --ready    slave pulls low to pause\n"
-	     "  -2 --dual     dual transfer\n"
-	     "  -4 --quad     quad transfer\n");
+	     );
 	exit(1);
 }
 
@@ -202,7 +187,7 @@ static void parse_opts(int argc, char *argv[])
 		};
 		int c;
 
-		c = getopt_long(argc, argv, "D:s:d:b:i:o:lHOLC3NR24p:v",
+		c = getopt_long(argc, argv, "D",
 				lopts, NULL);
 
 		if (c == -1)
@@ -251,11 +236,11 @@ static void transfer_file(int fd, char *filename)
 	uint8_t *rx;
 
 	if (stat(filename, &sb) == -1)
-		pabort("can't stat input file");
+		pabort("can't stat input file, check 'sudo rasp-config' to ensure SPI is enabled.");
 
 	tx_fd = open(filename, O_RDONLY);
 	if (tx_fd < 0)
-		pabort("can't open input file");
+		pabort("can't open input file, check 'sudo rasp-config' to ensure SPI is enabled.");
 
 	tx = malloc(sb.st_size);
 	if (!tx)
@@ -284,7 +269,7 @@ int main(int argc, char *argv[])
 
 	fd = open(device, O_RDWR);
 	if (fd < 0)
-		pabort("can't open device");
+		pabort("can't open device, check 'sudo rasp-config' to ensure SPI is enabled.");
 
 	/*
 	 * spi mode
@@ -323,34 +308,17 @@ int main(int argc, char *argv[])
 	printf("bits per word: %d\n", bits);
 	printf("max speed: %d Hz (%d KHz)\n", speed, speed/1000);
 
-	if (input_tx && input_file)
-		pabort("only one of -p and --input may be selected");
-
-	if (input_tx)
-		transfer_escaped_string(fd, input_tx);
-	else if (input_file)
-		transfer_file(fd, input_file);
-	else
-		transfer(fd, default_tx, default_rx, sizeof(default_tx));
+	transfer(fd, default_tx, default_rx, sizeof(default_tx));
 
 	close(fd);
 
 	printf("Loopback on pins 19-21, SPI MOSI MISO tested successfully. \n");
-
 	gpioTest();
+	checkBufferSize();
 	printf("\nAll tests passed, SPI should work for Duet 3 <> Raspberry Pi. \n ");
 
 	return ret;
 }
-
-
-
-
-
-
-
-
-
 
 
 
@@ -522,38 +490,72 @@ int gpioInitialise(void)
    return 0;
 }
 
-int gpioTest()
+void gpioFailMsg() {
+		printf("Send pin 22 and receive pin 24 do not match! \n");
+		printf("Check jumpers in place for testing, pin 22-24 and 19-21. \n");
+		printf("If they are correct, this machine MAY have an SPI problem, \n");
+		printf("and is unlikely to run correctly in a Duet3 <> Raspberry Pi configuration. \n");
+		abort();
+
+}
+
+void checkBufferSize() {
+	int FHbuf;
+	ssize_t bytes;	
+	char *readbuf;
+
+	FHbuf = open("/sys/module/spidev/parameters/bufsiz", O_RDONLY);
+	if (FHbuf < 0)
+		pabort("can't open cat /sys/module/spidev/parameters/bufsiz file, check 'sudo rasp-config' to ensure SPI is enabled.");
+
+	readbuf = malloc(101);
+	if (!readbuf)
+		pabort("can't allocate buffer to read cat /sys/module/spidev/parameters/bufsiz, check 'sudo rasp-config' to ensure SPI is enabled. ");
+
+
+	bytes = read(FHbuf, readbuf, 100);
+	if (bytes < 4)
+		pabort("failed to read at least four bytes from /sys/module/spidev/parameters/bufsiz, check 'sudo rasp-config' to ensure SPI is enabled.");
+	const char desired[6] = "8192\n";
+	if (0 == strcmp(readbuf,desired)) {
+		printf("\nSPI Buffer size correctly set to 8192.\n");
+	} else {
+		printf("\nSPI buffer size not set to 8192, please correct via: \n");
+		printf("echo \"options spidev bufsiz=8192\" | sudo tee /etc/modprobe.d/spidev.conf\n");
+		printf("and reboot. \n");
+		abort();
+	}
+}
+
+void gpioTest()
 {
    int i;
 
-   if (gpioInitialise() < 0) return 1;
+   if (gpioInitialise() < 0) {
+		pabort("Unable to init GPIO shared memory.");
+   }
 
    printf("\nTesting SPI CE0 on pin 24, GPIO 8 as an input. \n");
-   printf("Testing via jumper from adjacent pin 22, gpio 25. \n");
+   printf("Testing via jumper from adjacent pin 22, gpio 25, as output. \n");
    gpioSetMode(25,PI_OUTPUT);
    gpioSetMode(8,PI_INPUT);
    gpioWrite(25,1);
-   i=25; printf("gpio=%d mode=%d level=%d\n", i, gpioGetMode(i), gpioRead(i));
-   i=8; printf("gpio=%d mode=%d level=%d\n", i, gpioGetMode(i), gpioRead(i));
+   i=25; printf("gpio=%2d mode=%2d level=%d\n", i, gpioGetMode(i), gpioRead(i));
+   i=8;  printf("gpio=%2d mode=%2d level=%d\n", i, gpioGetMode(i), gpioRead(i));
    if (gpioRead(8) != 1 ) {
-		printf("Send pin 22 and receive pin 24 do not match! \n");
-		printf("Check jumpers in place for testing, pin 22-24 and 19-21. \n");
-		printf("If they are correct, this machine MAY have an SPI problem, \n");
-		printf("and is unlikely to run correctly in a Duet3 <> Raspberry Pi configuration. \n");
+		gpioFailMsg();
+		abort();
 		abort();
    }
    gpioWrite(25,0);
-   i=25; printf("gpio=%d mode=%d level=%d\n", i, gpioGetMode(i), gpioRead(i));
-   i=8; printf("gpio=%d mode=%d level=%d\n", i, gpioGetMode(i), gpioRead(i));
+   i=25; printf("gpio=%2d mode=%2d level=%d\n", i, gpioGetMode(i), gpioRead(i));
+   i=8;  printf("gpio=%2d mode=%2d level=%d\n", i, gpioGetMode(i), gpioRead(i));
    if (gpioRead(8) != 0 ) {
-		printf("Send pin 22 and receive pin 24 do not match! \n");
-		printf("Check jumpers in place for testing, pin 22-24 and 19-21. \n");
-		printf("If they are correct, this machine MAY have an SPI problem, \n");
-		printf("and is unlikely to run correctly in a Duet3 <> Raspberry Pi configuration. \n");
+		gpioFailMsg();
 		abort();
    }
 	printf("Send pin 22 and receive pin SPI CE0 on pin 24, GPIO 8 matched. \n");
-
-   return 0;
 }
+
+
 
