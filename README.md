@@ -8,7 +8,7 @@ Either:
 
 or, if you want just the binary:
 
-    wget https://github.com/DanalEstes/DuetTestSPI/raw/master/DuetTestSPI
+    wget -N https://github.com/DanalEstes/DuetTestSPI/raw/master/DuetTestSPI
     chmod 744 DuetTestSPI
 
 ## Run
